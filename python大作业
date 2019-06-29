@@ -1,0 +1,205 @@
+import cv2
+import numpy as np
+import os
+import sys
+from aip import AipOcr
+import xlsxwriter
+from cv2 import dnn
+haar_file = "D:/QQPCmgr/Anaconda3/pkgs/libopencv-3.4.2-h20b85fd_0/Library/etc/haarcascades/haarcascade_frontalface_alt_tree.xml"
+gender_model = "C:/Users/DELL/Desktop/AgeGenderDeepLearning-master/models/gender_net.caffemodel"
+gender_text = "C:/Users/DELL/Desktop/AgeGenderDeepLearning-master/gender_net_definitions/deploy.prototxt"
+def get_image(path):
+    #获取图片
+    srcPic=cv2.imread(path)
+    
+    return srcPic
+
+def get_shrinkedPic(srcPic):
+    #获取缩小后的图像，以便提高速度
+    shrinkedPic=cv2.pyrDown(srcPic)
+    
+    shrinkedPic=cv2.pyrDown(shrinkedPic)  
+    
+    return shrinkedPic
+
+def get_greyPic(shrinkedPic):
+    #转化为灰度图
+    greyPic=cv2.cvtColor(shrinkedPic,cv2.COLOR_BGR2GRAY)
+    
+    return greyPic
+
+def medianBlur(grayPic):
+    #中值滤波
+    medianBlurPic=cv2.medianBlur(greyPic, 7)
+    
+    return medianBlurPic
+
+def get_binPic(midianBlurPic,n):
+    #转为二值图片
+    ret, binPic=cv2.threshold(medianBlurPic,n, 200, cv2.THRESH_BINARY)
+    
+    #cv2.imshow("1",binPic)
+    
+    #cv2.waitKey(0)
+    
+    return binPic
+
+def methodCanny(binPic):
+    #canny边缘检测
+    cannyPic=cv2.Canny(binPic,200, 200*2.5)
+    
+    return cannyPic
+
+def findContours(cannyPic):
+    #提取轮廓
+    contours, hierarchy=cv2.findContours(cannyPic,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+
+    return contours
+def get_polyContours(contours):
+    #多边形将轮廓包围
+    linePic=np.ones(binPic.shape,np.uint8)*0
+    
+    polyContours=cv2.approxPolyDP(contours[0],50 ,True)
+    
+    polyPic=cv2.drawContours(linePic,polyContours,-1,(255,255,255), 10);
+    
+    return polyPic,polyContours
+
+def findConvexHull(polyContours):
+    #寻找凸包
+    hull=cv2.convexHull(polyContours,False); 
+    
+    return hull
+
+def perspectiveTransform(hull,shrinkedPic):
+    #透视变换
+    srcPoints=np.float32([hull[0][0],hull[1][0],hull[2][0],hull[3][0]])
+    
+    dstPoints=np.float32([[860,540],[0,540],[0,0],[860,0]])
+    
+    transMat = cv2.getPerspectiveTransform(srcPoints, dstPoints)
+    
+    outPic=cv2.warpPerspective(shrinkedPic,transMat,(860,540))
+    
+    return outPic
+
+def predict_gender(net,image):
+    #预测性别
+    blob=dnn.blobFromImage(image,1.0,(227,227))
+    
+    net.setInput(blob,"data");
+    
+    prob=net.forward("prob")
+    
+    probMat=prob.reshape(2,1)
+    
+    print(probMat)
+  
+    if probMat[0][0]>probMat[1][0]:
+        
+        return "男"
+        
+    else:
+        
+        return "女"
+        
+DATADIR="C:\\Users\\DELL\\Desktop\\1"
+#存放照片的目录
+path=os.path.join(DATADIR)
+
+img_list=os.listdir(path)
+
+workbook=xlsxwriter.Workbook('C:\\Users\\DELL\\Desktop\\识别信息.xlsx')
+#创建Excel表格
+worksheet=workbook.add_worksheet()
+
+worksheet.write(0,0,"姓名")
+worksheet.write(0,1,"类别")
+worksheet.write(0,2,"学号")
+worksheet.write(0,3,"性别")
+#表头
+APP_ID = '16637102'
+#调用百度云API
+API_KEY = 'CyGRVELCAYouSiotEGrCLs3o'
+    
+SECRET_KEY = 'xfwCzkGgXApxxmZ7hEEBSOGWpsZKqtY7'
+
+m=0
+
+num=80
+
+for i in img_list:
+
+    srcPic=get_image(os.path.join(path,i))
+
+    shrinkedPic=get_shrinkedPic(srcPic)
+    
+    greyPic=get_greyPic(shrinkedPic)    
+
+    medianBlurPic=medianBlur(greyPic)
+
+    while True:
+    
+        binPic=get_binPic(medianBlurPic,num)
+
+        cannyPic=methodCanny(binPic)
+
+        contours=findContours(cannyPic)
+
+        ret,polyContours=get_polyContours(contours)
+
+        hull=findConvexHull(polyContours)
+        
+        if hull.size==8:
+            break;
+        else:
+            num+=1
+    
+    outPic=perspectiveTransform(hull,shrinkedPic)
+    
+    outPic=outPic[110:410,40:740]
+    
+    cv2.imwrite('C:\\Users\\DELL\\Desktop\\2\\outPic'+str(m)+'.jpg',outPic)    
+    
+    client = AipOcr(APP_ID, API_KEY, SECRET_KEY)
+    
+    i = open(r'C:\\Users\\DELL\\Desktop\\2\\outPic'+str(m)+'.jpg','rb')
+    
+    img = i.read()
+    
+    message = client.basicGeneral(img)
+    
+    n=0
+    
+    for i in message.get('words_result'):        
+                   
+        worksheet.write(m+1,n,i.get('words')[3:])
+            
+        print(i.get('words')[3:])
+            
+        n+=1
+     
+    detector=cv2.CascadeClassifier(haar_file)
+    
+    gray=cv2.cvtColor(outPic,cv2.COLOR_BGR2GRAY)
+    
+    rect=detector.detectMultiScale(gray,1.1, 3, 0)
+    
+    print(rect[0][0])  
+    
+    
+    gender_net = dnn.readNetFromCaffe(gender_text, gender_model)
+    
+    gender=predict_gender(gender_net, outPic[rect[0][1]:rect[0][1]+rect[0][3],rect[0][0]:rect[0][0]+rect[0][2]])
+    
+    worksheet.write(m+1,3,gender)
+    
+    print(gender)
+      
+    m+=1
+    
+workbook.close()
+    
+
+
+    
